@@ -1,0 +1,15 @@
+name: onnx2tf-win
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+      - tensorflow==2.20.*
+      - protobuf==5.28.2
+      - onnx==1.16.1
+      - onnxsim==0.4.36
+      - onnx2tf==1.22.3
+      - onnxruntime==1.18.0        # (isteğe bağlı: ONNX test için)
+      - flatbuffers>=23.5.26
+      - "numpy<2.0"                # TF 2.20 ile uyum için güvenli sınır
