@@ -1,22 +1,37 @@
-# RDD2020 → YOLOv8 (PyTorch→TFLite)
+# RDD2020 → YOLOv8 (PyTorch → TFLite)
 
-Yol çatlak/hasar tespiti için **Road Damage Dataset 2020 (RDD2020)** verisiyle YOLOv8 modeli eğitip, modeli **TFLite (FP16)**’a dışa aktarmak için uçtan uca bir rehber.
+Yol çatlak/hasar tespiti için **Road Damage Dataset 2020 (RDD2020)** ile YOLOv8 modeli eğitme, doğrulama, Streamlit ile etkileşimli arayüz ve **TFLite (FP16 + NMS)** dışa aktarma rehberi.
 
-> Bu README, paylaştığınız Python kodunu temel alır: VOC XML → YOLO etikete dönüştürme, eğitim/validasyon ayrımı, YOLOv8 ile eğitim/validasyon ve **TFLite** export.
+---
+
+## 🌟 Özellikler
+
+* VOC **XML → YOLO** etikete otomatik dönüşüm
+* **Train/Val** ayrımı ve **data.yaml** üretimi
+* **YOLOv8** eğitim, doğrulama ve metrikler (mAP\@0.50, mAP\@0.50:0.95)
+* **Streamlit Web UI**: tek/çoklu resim yükleme, eşik ayarları (conf/IoU/imgsz), çıktı indirme
+* **TFLite (FP16)** export (grafikte **NMS** dahil)
+
+image.png
+indir.png
 
 ---
 
 ## 1) Proje Özeti
 
-* **Veri kümesi**: RDD2020 (örnek ülkeler: *Czech*, *Japan*, *India*).
-* **Amaç**: VOC XML etiketlerini YOLO formatına çevirip küçük bir altküme üzerinde (isteğe göre tüm veri) YOLOv8 eğitmek.
-* **Çıktılar**: `rdd2020_subset_yolo/` (YOLO dataset yapısı), `runs/detect/train/` (eğitim artefaktları), `best.pt`, `best_float16.tflite`.
+* **Veri kümesi**: RDD2020 (*Czech*, *Japan*, *India* alt klasörleri)
+* **Amaç**: VOC kutularını YOLO formatına çevirip YOLOv8 ile eğitmek
+* **Çıktılar**:
+
+  * Dataset: `/working/rdd2020_subset_yolo/` → `images/{train,val}`, `labels/{train,val}`, `data.yaml`
+  * Eğitim: `runs/detect/train/weights/{best.pt,last.pt}`
+  * Dağıtım: `best_float16.tflite`
 
 ---
 
 ## 2) Dizin Yapısı (Beklenen)
 
-```
+```bash
 archive/
 └─ train/
    ├─ Czech/
@@ -30,47 +45,36 @@ archive/
       └─ annotations/xmls/*.xml
 
 /working/rdd2020_subset_yolo/
-└─ {images,labels}/{train,val}/*.jpg|*.txt
+├─ images/{train,val}/*.jpg
+├─ labels/{train,val}/*.txt
 └─ data.yaml
 ```
-
-> Girdi kök yolu kodda `base_path = 'archive/train'` olarak tanımlıdır. Çıktı kök yolu `output_base_path = '/working/rdd2020_subset_yolo'`.
 
 ---
 
 ## 3) Kurulum
 
-### Gereksinimler
-
-* Python 3.9+
-* PyTorch (CUDA varsa GPU ile)
-* Ultralytics (YOLOv8)
-* lxml veya xml parser (standart `xml.etree.ElementTree` yeterlidir)
-* opsiyonel: `wandb`
-
 ```bash
-pip install ultralytics==8.* tqdm pyyaml
-# (GPU için) pip install torch --index-url https://download.pytorch.org/whl/cu121
+# YOLOv8 + yardımcı kütüphaneler
+pip install ultralytics==8.* tqdm pyyaml pillow numpy pandas
+# (GPU kullanacaksan) uygun Torch + CUDA sürümünü ayrıca kur
 ```
 
-> Windows’ta TFLite export sırasında ek bağımlılık gerekmeyebilir; sorun yaşarsanız `onnx`, `tensorflow` (CPU) kurulumu gerektirebilir. Ultralytics çoğu durumda bunları otomatik yönetir.
+> **Windows ipucu**: Yol ayracı (`\`) ve Türkçe/boşluk içeren klasör adları sorun çıkarabilir; mümkünse ASCII klasör adları kullanın.
 
 ---
 
 ## 4) Veri Hazırlama (VOC XML → YOLO)
 
-Kodun yaptığı işlemler:
+Kodun yaptığı adımlar:
 
-1. Ülkeleri gezer: `countries = ['Czech','Japan','India']`
-2. Her ülke için `annotations/xmls` altındaki XML’leri toplar.
-3. `subset_ratio` ile altküme seçer (1 → %100, 0.2 → %20 gibi).
-4. `split_ratio = 0.8` ile train/val ayırır.
-5. Her görsel için VOC kutularını **YOLO formatına** (class x\_center y\_center w h, normalize) dönüştürür.
-6. **Sınıf sözlüğünü** dinamik üretir: ilk gördüğü sınıfa 0, sonra 1…
+1. Ülkeleri gezer (`Czech, Japan, India`)
+2. XML’leri toplar ve `subset_ratio` ile altküme seçer
+3. `split_ratio` ile **train/val** böler
+4. VOC kutularını YOLO formatına (class x\_center y\_center w h, normalize) çevirir
+5. `data.yaml` dosyasını üretir
 
-### Çalıştırma (script olarak)
-
-`prepare_rdd2020_yolo.py` gibi kaydedip çalıştırabilirsiniz:
+### Örnek Çalıştırma (script)
 
 ```bash
 python prepare_rdd2020_yolo.py \
@@ -81,33 +85,20 @@ python prepare_rdd2020_yolo.py \
   --split_ratio 0.8
 ```
 
-> Kodunuz sabit değişkenlerle çalışıyor; argparse eklemek isterseniz aşağıda örnek verildi (Bkz. *Ekler*).
-
-### Üretilen `data.yaml`
-
-Kod, `data.yaml` dosyasını otomatik yazar:
+**data.yaml** (otomatik):
 
 ```yaml
 train: /working/rdd2020_subset_yolo/images/train
-val: /working/rdd2020_subset_yolo/images/val
+val:   /working/rdd2020_subset_yolo/images/val
 nc: <sınıf_sayısı>
 names: [<sınıf_0>, <sınıf_1>, ...]
 ```
 
-> `names` sırası, veri hazırlama sırasında karşılaşılan sınıf sırasına göredir. Projelerde yeniden üretilebilirlik için bu sözlüğü sabitlemeniz önerilir (bkz. **İpuçları**).
+> **Not**: Sınıf kimlikleri veri hazırlama sırasında ilk karşılaşılan sıraya göre oluşturulur. Tekrar üretilebilirlik için sabit bir sınıf listesi tutmanız önerilir.
 
 ---
 
-## 5) YOLOv8 Eğitimi
-
-Temel parametreler:
-
-* **Model**: `yolov8s.pt` (hız/başarı dengesi). Hızlı denemeler için `yolov8n.pt`.
-* **Epoch**: 20 (başlangıç için).
-* **imgsz**: 640.
-* **WANDB**: devre dışı.
-
-### Komut (Python ile)
+## 5) YOLOv8 Eğitimi & Doğrulama
 
 ```python
 from ultralytics import YOLO
@@ -127,13 +118,13 @@ print(f"mAP50: {metrics.box.map50:.4f}")
 print(f"mAP50-95: {metrics.box.map:.4f}")
 ```
 
-**Eğitim çıktıları**: `runs/detect/train/` altında `weights/best.pt`, `weights/last.pt`, `results.png`, `confusion_matrix.png` vb.
+**Çıktılar**: `runs/detect/train/weights/best.pt`, `results.png`, `confusion_matrix.png` vb.
 
 ---
 
 ## 6) Modeli Kaydetme
 
-Ultralytics eğitim sonunda zaten `best.pt` üretir. Ek olarak manuel kaydetmek isterseniz:
+Ultralytics eğitim sonunda `best.pt` üretir. İstersen ayrıca:
 
 ```python
 model.save('best_model.pt')
@@ -141,7 +132,7 @@ model.save('best_model.pt')
 
 ---
 
-## 7) TFLite’a Dışa Aktarma (FP16)
+## 7) TFLite’a Dışa Aktarma (FP16 + NMS)
 
 ```python
 from ultralytics import YOLO
@@ -150,93 +141,104 @@ m.export(
     format='tflite',
     imgsz=640,
     half=True,  # FP16
-    nms=True    # grafiğe NMS ekle
+    nms=True    # grafiğe NMS ekler
 )
-# çıktı: best_float16.tflite
+# => best_float16.tflite
 ```
 
-> Notlar:
-> • `imgsz` eğitimle **aynı** olmalı.
-> • Bazı ortamlarda TensorFlow/FlatBuffers eksikse kurulum yapmanız gerekebilir.
-> • Android/Flutter’da TFLite kullanırken giriş/çıkış tensör şekilleri ve NMS uyumluluğuna dikkat edin.
+> `imgsz` eğitimdeki ile aynı olmalı. Bazı ortamlarda TensorFlow/FlatBuffers gerekebilir.
 
 ---
 
-## 8) Hızlı Çıkarım (Inference) Örneği
+## 8) Hızlı Çıkarım (Inference)
 
 ```python
 from ultralytics import YOLO
 model = YOLO('runs/detect/train/weights/best.pt')
-res = model('sample.jpg')
-res[0].show()         # OpenCV penceresi
-res[0].save('out/')   # `out/` klasörüne kaydeder
+results = model('sample.jpg')
+results[0].save('out/')
 ```
 
 ---
 
-## 9) Karşılaşılabilecek Hatalar & Çözümler
+## 9) Streamlit Web UI
 
-* **`Image file ... does not exist. Skipping.`**
-  XML içindeki `filename` gerçek dosya adıyla uyuşmuyor olabilir. Çözüm:
+`streamlit_app.py` dosyası ile interaktif arayüz:
 
-  * XML’de `filename` boşsa kod zaten `xml_file` tabanlı `.jpg` dener.
-  * Farklı uzantılar (JPG/jpg/png) varsa dönüştürme/senkronizasyon yapın.
-
-* **`Size missing in annotation ...`**
-  XML’de `<size>` yoksa o örnek atlanır. Çözüm: Kusurlu XML dosyalarını bulup düzeltin.
-
-* **Bozuk XML / `ET.ParseError`**
-  Hatalı XML kayıtları atlanır. Gerekirse bu dosyaları listeleyip temizleyin.
-
-* **Sınıf isimleri düzensiz**
-  Veri hazırlama sırasında dinamik sözlük oluşuyor. Eğitim tekrarlarında sıra değişebilir. Çözüm: Sınıf–ID sözlüğünü sabitleyin (bkz. **İpuçları**).
-
-* **CUDA görünmüyor**
-  `device=-1` ile CPU’da deneyin. CUDA sürümü ve PyTorch uyumluluğunu kontrol edin.
-
----
-
-## 10) İyileştirme İpuçları
-
-* **Sınıf sözlüğünü sabitleyin**: RDD2020’nin bilinen sınıflarını önceden tanımlayıp `class_name_to_id`’yi bu haritayla doldurun; veri hazırlama sırasında buna göre yazdırın. Böylece tekrar üretilebilirlik artar.
-* **Augmentasyon**: `hyp` dosyası veya `train` argümanlarıyla `mosaic`, `mixup`, `hsv_h`, `degrees` gibi arttırmalarla oynayın.
-* **Model boyutu**: `yolov8m/l` ile doğruluğu; `yolov8n` ile hızı test edin.
-* **Epoch / LR**: 20 yerine 50–100 epoch denenebilir; erken durdurma (patience) ve `batch` büyüklüğü önemli.
-* **imgsz**: 640→768/960 doğruluğu artırabilir ama eğitim süresini uzatır.
-* **Class imbalance**: Nadir sınıflar için **oversampling** veya **weighted loss** araştırın.
-
----
-
-## 11) Lisans & Atıf
-
-* **RDD2020** lisans koşullarına uyun (kaynaktan kontrol edin).
-* Makale/raporlarda: *RDD2020 dataset* ve *Ultralytics YOLOv8*’e atıf verin.
-
----
-
-## 12) Kısa Komut Özeti
+**Kurulum**
 
 ```bash
-# 1) Veri dönüştürme
-python prepare_rdd2020_yolo.py --base_path archive/train \
-  --out /working/rdd2020_subset_yolo --countries Czech Japan India \
-  --subset_ratio 1.0 --split_ratio 0.8
+pip install streamlit ultralytics pillow pandas numpy
+```
 
-# 2) Eğitim
-yolo detect train data=/working/rdd2020_subset_yolo/data.yaml \
-  model=yolov8s.pt imgsz=640 epochs=20 device=0
+**Çalıştırma**
 
-# 3) Değerlendirme
-yolo detect val model=runs/detect/train/weights/best.pt \
+```bash
+streamlit run streamlit_app.py
+```
+
+**Kullanım**
+
+* Sidebar → **Model ağırlığı (.pt)**: `runs/detect/train/weights/best.pt`
+* **Image size / Conf / IoU / Max detections** ayarlarını yap
+* Tek/çoklu resim yükle, **çıktıyı indir (PNG)**
+* (Opsiyonel) `data.yaml` gir → **Validation çalıştır**
+
+**Notlar**
+
+* `@st.cache_resource` ile model tek sefer yüklenir
+* Yükleme boyutu sınırı için `~/.streamlit/config.toml`:
+
+  ```toml
+  [server]
+  maxUploadSize = 512
+  ```
+* Çoklu sekmesinde CSV/PNG indirme butonları eklenebilir (örnek kodda hazır şablonlar var)
+
+---
+
+## 10) Karşılaşılabilecek Hatalar & Çözümler
+
+* **`Image file ... does not exist. Skipping.`** → XML `filename` ile gerçek dosya adı uyuşmuyor olabilir. Uzantı farklarını (jpg/JPG/png) normalize edin.
+* **`Size missing in annotation ...`** → `<size>` yoksa örnek atlanır; hatalı XML’i düzeltin.
+* **`ET.ParseError`** → Bozuk XML; problemli dosyaları loglayıp temizleyin.
+* **CUDA görünmüyor** → `device=-1` ile CPU’da deneyin; PyTorch–CUDA sürüm eşleşmesini kontrol edin.
+* **Sınıf sırası değişken** → Sınıf–ID haritasını sabitleyin.
+
+---
+
+## 11) İyileştirme İpuçları
+
+* **Model boyutu**: `yolov8n/s/m/l` karşılaştırın (hız/doğruluk)
+* **Epoch/Batch/LR**: 20 yerine 50–100 denenebilir; erken durdurma (patience)
+* **imgsz**: 640 → 768/960 doğruluğu artırabilir (maliyet artar)
+* **Augmentasyon**: mosaic, mixup, hsv, degrees vb.
+* **Dengesiz sınıflar**: oversampling/weighted loss stratejileri
+
+---
+
+## 12) Hızlı Komut Özeti
+
+```bash
   data=/working/rdd2020_subset_yolo/data.yaml imgsz=640 device=0
 
-# 4) Export (TFLite FP16)
+#  Export (TFLite FP16)
 yolo export model=runs/detect/train/weights/best.pt format=tflite imgsz=640 half=True nms=True
 ```
 
 ---
 
-## Ekler — Argparse’lı Veri Hazırlama İskeleti (Opsiyonel)
+## 13) Lisans & Atıf
+
+* RDD2020 veri kümesi (https://www.kaggle.com/datasets/ziedkelboussi/rdd2020-dataset/data)
+* Ultralytics YOLOv8 kullanım https://github.com/ultralytics/ultralytics
+https://github.com/sekilab/RoadDamageDetector
+
+---
+
+## Ek — Argparse’lı Veri Hazırlama İskeleti
+
+*(İsterseniz script olarak kullanın.)*
 
 ```python
 # prepare_rdd2020_yolo.py (iskelet)
@@ -322,14 +324,15 @@ for country in countries:
             with open(label_dst_path, 'w') as label_file:
                 for obj in root.findall('object'):
                     class_name = obj.findtext('name')
-                    if not class_name: continue
-
+                    if not class_name:
+                        continue
                     if class_name not in class_name_to_id:
                         class_name_to_id[class_name] = len(class_name_to_id)
                     class_id = class_name_to_id[class_name]
 
                     b = obj.find('bndbox')
-                    if b is None: continue
+                    if b is None:
+                        continue
                     xmin = float(b.findtext('xmin'))
                     ymin = float(b.findtext('ymin'))
                     xmax = float(b.findtext('xmax'))
@@ -340,7 +343,8 @@ for country in countries:
                     bw = (xmax - xmin) / width
                     bh = (ymax - ymin) / height
 
-                    label_file.write(f"{class_id} {x_center} {y_center} {bw} {bh}\n")
+                    label_file.write(f"{class_id} {x_center} {y_center} {bw} {bh}
+")
 
 # data.yaml
 data = {
@@ -352,50 +356,7 @@ data = {
 with open(os.path.join(output_base_path, 'data.yaml'), 'w') as f:
     yaml.dump(data, f, default_flow_style=False)
 
-print("Done. Classes:")
-for k,v in class_name_to_id.items():
+print('Done. Classes:')
+for k, v in class_name_to_id.items():
     print(v, k)
 ```
-
----
-
-## 13) Streamlit Web UI (İsteğe Bağlı)
-
-Paylaştığın `streamlit_app.py` dosyasını bu projeye doğrudan ekleyebilirsin. Uygulama tek/çoklu resim yükleme, eşi̇k ayarları (conf/IoU/imgsz), sonuç görselleştirme ve isteğe bağlı validation (data.yaml) destekler.
-
-### Kurulum
-
-```bash
-pip install streamlit ultralytics pillow pandas numpy
-# (GPU kullanacaksan) uygun PyTorch + CUDA sürümünü ayrıca kur
-```
-
-### Çalıştırma
-
-```bash
-streamlit run streamlit_app.py
-```
-
-* **Ağırlık yolu**: Sidebar → *Model ağırlığı (.pt)* alanına `runs/detect/train/weights/best.pt` (veya `best_model.pt`) ver.
-* **İsteğe bağlı validation**: `data.yaml` yolunu girip **Validation çalıştır**’a bas.
-
-### Notlar
-
-* `@st.cache_resource` ile model bir kez yüklenir (sayfa yenilense de hızlı döner).
-* `imgsz` eğitimde kullandığın boyutla aynı olmalı (örn. 640).
-* Eğer **yükleme boyutu** sorunu yaşarsan `~/.streamlit/config.toml` içine:
-
-  ```toml
-  [server]
-  maxUploadSize = 512
-  ```
-
-  ekleyebilirsin (MB cinsinden).
-* Windows’ta yol ayırıcıları (`\` vs `/`) ve Türkçe karakterli patikalar sorun çıkarırsa düz ASCII klasör isimleri kullan.
-* Torch/Ultralytics sürüm uyuşmazlığında: `pip show ultralytics torch` ile sürümleri kontrol edip Ultralytics 8.x + Torch sürümünü eşleştir.
-
-### Küçük İyileştirmeler (opsiyonel)
-
-* **Toplu çıktı indirme**: Çoklu sekmesinde her görsel için `st.download_button` ekleyebilirsin.
-* **Sembol adları**: `names = model.model.names if hasattr(model, "model") else model.names` ifadesi farklı sürümlerde uyumluluk sağlar (kodunda zaten var).
-* **CSV export**: `result_to_df` dönen tabloyu `df.to_csv` ile indirilebilir yap.
