@@ -12,8 +12,9 @@ Yol çatlak/hasar tespiti için **Road Damage Dataset 2020 (RDD2020)** ile YOLOv
 * **Streamlit Web UI**: tek/çoklu resim yükleme, eşik ayarları (conf/IoU/imgsz), çıktı indirme
 * **TFLite (FP16)** export (grafikte **NMS** dahil)
 
-image.png
-indir.png
+<img width="1895" height="866" alt="image" src="https://github.com/user-attachments/assets/2338847f-df8b-402d-bc9f-5299fd20c535" />
+<img width="1887" height="828" alt="image" src="https://github.com/user-attachments/assets/de50c5e0-5faf-4abf-a975-770883e8e636" />
+
 
 ---
 
